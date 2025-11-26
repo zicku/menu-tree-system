@@ -17,6 +17,8 @@ import {
   X,
   Loader2,
   Layers,
+  ArrowDown,
+  ArrowUp,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -36,13 +38,12 @@ interface Menu {
   name: string;
   parentId: string | null;
   children?: Menu[];
-  depth?: number;
+  order: number;
 }
 
 interface MenuState {
   data: Menu[];
   loading: boolean;
-  error: string | null;
   isDemoMode: boolean;
 }
 
@@ -52,42 +53,31 @@ interface MenuState {
  * ==========================================
  */
 
+// Menggunakan hardcoded URL untuk Docker Build Stability
 const API_BASE_URL = "http://localhost:3000/api";
 
 // --- MOCK DATA (Untuk Fallback/Demo) ---
 const INITIAL_MOCK_DATA: Menu[] = [
   {
     id: "root-1",
-    name: "System Management",
+    name: "Dashboard",
     parentId: null,
-    children: [
-      { id: "c-1", name: "User Management", parentId: "root-1", children: [] },
-      {
-        id: "c-2",
-        name: "Role & Permissions",
-        parentId: "root-1",
-        children: [],
-      },
-    ],
+    order: 0,
+    children: [],
   },
   {
     id: "root-2",
-    name: "Inventory",
+    name: "System Management",
     parentId: null,
+    order: 1,
     children: [
+      { id: "c-1", name: "Users", parentId: "root-2", order: 0, children: [] },
       {
-        id: "c-3",
-        name: "Products",
+        id: "c-2",
+        name: "Roles & Permissions",
         parentId: "root-2",
-        children: [
-          { id: "c-3-1", name: "Categories", parentId: "c-3", children: [] },
-          {
-            id: "c-3-2",
-            name: "Stock Adjustments",
-            parentId: "c-3",
-            children: [],
-          },
-        ],
+        order: 1,
+        children: [],
       },
     ],
   },
@@ -97,8 +87,7 @@ const INITIAL_MOCK_DATA: Menu[] = [
 const traverseAndModify = (
   nodes: Menu[],
   targetId: string,
-  action: (node: Menu, parent: Menu[] | null, idx: number) => void,
-  parent: Menu[] | null = null
+  action: (node: Menu, parentArr: Menu[], idx: number) => void
 ): boolean => {
   for (let i = 0; i < nodes.length; i++) {
     if (nodes[i].id === targetId) {
@@ -107,7 +96,7 @@ const traverseAndModify = (
     }
     if (
       nodes[i].children &&
-      traverseAndModify(nodes[i].children!, targetId, action, nodes[i].children)
+      traverseAndModify(nodes[i].children!, targetId, action)
     )
       return true;
   }
@@ -116,7 +105,6 @@ const traverseAndModify = (
 
 // --- SERVICE FACTORY ---
 const MenuService = {
-  // Local state container for demo mode
   mockStore: JSON.parse(JSON.stringify(INITIAL_MOCK_DATA)) as Menu[],
 
   async fetchAll(setDemo: (v: boolean) => void) {
@@ -124,9 +112,9 @@ const MenuService = {
       const res = await axios.get(`${API_BASE_URL}/menus`, { timeout: 1500 });
       setDemo(false);
       return res.data;
-    } catch (err) {
+    } catch (_err) {
       setDemo(true);
-      return this.mockStore; // Return local data
+      return this.mockStore;
     }
   },
 
@@ -136,13 +124,16 @@ const MenuService = {
         id: crypto.randomUUID(),
         name,
         parentId,
+        order: 0,
         children: [],
       };
       if (!parentId) {
+        newItem.order = this.mockStore.length;
         this.mockStore.push(newItem);
       } else {
         traverseAndModify(this.mockStore, parentId, (node) => {
           node.children = node.children || [];
+          newItem.order = node.children.length;
           node.children.push(newItem);
         });
       }
@@ -151,14 +142,20 @@ const MenuService = {
     return (await axios.post(`${API_BASE_URL}/menus`, { name, parentId })).data;
   },
 
-  async update(id: string, name: string, isDemo: boolean) {
+  async update(
+    id: string,
+    updateData: { name?: string; parentId?: string | null },
+    isDemo: boolean
+  ) {
     if (isDemo) {
       traverseAndModify(this.mockStore, id, (node) => {
-        node.name = name;
+        if (updateData.name) node.name = updateData.name;
+        if (updateData.parentId !== undefined)
+          node.parentId = updateData.parentId;
       });
-      return { id, name };
+      return { id, ...updateData };
     }
-    return (await axios.put(`${API_BASE_URL}/menus/${id}`, { name })).data;
+    return (await axios.put(`${API_BASE_URL}/menus/${id}`, updateData)).data;
   },
 
   async delete(id: string, isDemo: boolean) {
@@ -167,13 +164,36 @@ const MenuService = {
       if (rootIdx > -1) {
         this.mockStore.splice(rootIdx, 1);
       } else {
-        traverseAndModify(this.mockStore, id, (_, parentArr, idx) => {
-          parentArr?.splice(idx, 1);
+        traverseAndModify(this.mockStore, id, (_node, parentArr, idx) => {
+          parentArr.splice(idx, 1);
         });
       }
       return true;
     }
     await axios.delete(`${API_BASE_URL}/menus/${id}`);
+  },
+
+  async reorder(id: string, newOrder: number, isDemo: boolean) {
+    if (isDemo) {
+      console.warn("Reorder not fully implemented in mock mode.");
+      return { message: "Reorder simulated locally." };
+    }
+    return (
+      await axios.patch(`${API_BASE_URL}/menus/${id}/reorder`, {
+        order: newOrder,
+      })
+    ).data;
+  },
+
+  async move(id: string, newParentId: string | null, isDemo: boolean) {
+    if (isDemo) {
+      return this.update(id, { parentId: newParentId }, true);
+    }
+    return (
+      await axios.patch(`${API_BASE_URL}/menus/${id}/move`, {
+        parentId: newParentId,
+      })
+    ).data;
   },
 };
 
@@ -197,6 +217,18 @@ const Badge = ({ active, text }: { active: boolean; text: string }) => (
   </div>
 );
 
+interface ButtonProps {
+  children?: React.ReactNode;
+  onClick?: (e: React.MouseEvent) => void;
+  variant?: "primary" | "secondary" | "danger" | "ghost";
+  size?: "sm" | "md" | "icon";
+  className?: string;
+  disabled?: boolean;
+  type?: "button" | "submit" | "reset";
+  icon?: React.ElementType;
+  title?: string;
+}
+
 const Button = ({
   children,
   onClick,
@@ -205,15 +237,9 @@ const Button = ({
   className,
   disabled,
   icon: Icon,
-}: {
-  children?: React.ReactNode;
-  onClick?: (e: React.MouseEvent) => void;
-  variant?: "primary" | "secondary" | "danger" | "ghost";
-  size?: "sm" | "md" | "icon";
-  className?: string;
-  disabled?: boolean;
-  icon?: React.ElementType;
-}) => {
+  type = "button",
+  title,
+}: ButtonProps) => {
   const base =
     "inline-flex items-center justify-center rounded-lg font-medium transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed active:scale-95";
   const variants = {
@@ -236,7 +262,9 @@ const Button = ({
     <button
       onClick={onClick}
       disabled={disabled}
+      type={type}
       className={cn(base, variants[variant], sizes[size], className)}
+      title={title}
     >
       {Icon && <Icon size={size === "sm" ? 14 : 16} />}
       {children}
@@ -301,75 +329,6 @@ const Modal = ({
  * ==========================================
  */
 
-// Custom Hook untuk memisahkan Logic dari View
-const useMenuSystem = () => {
-  const [state, setState] = useState<MenuState>({
-    data: [],
-    loading: true,
-    error: null,
-    isDemoMode: false,
-  });
-  const [expandedIds, setExpandedIds] = useState<string[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
-
-  // Actions
-  const fetchData = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true }));
-    const data = await MenuService.fetchAll((isDemo) =>
-      setState((prev) => ({ ...prev, isDemoMode: isDemo }))
-    );
-    setState((prev) => ({ ...prev, data, loading: false }));
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const toggleExpand = (id: string) => {
-    setExpandedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
-  const expandAll = () => {
-    const getAllIds = (nodes: Menu[]): string[] => {
-      let ids: string[] = [];
-      nodes.forEach((n) => {
-        ids.push(n.id);
-        if (n.children) ids = [...ids, ...getAllIds(n.children)];
-      });
-      return ids;
-    };
-    setExpandedIds(getAllIds(state.data));
-  };
-
-  const filteredData = useMemo(() => {
-    if (!searchTerm) return state.data;
-    const filter = (nodes: Menu[]): Menu[] =>
-      nodes.reduce((acc: Menu[], node) => {
-        const matches = node.name
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase());
-        const children = node.children ? filter(node.children) : [];
-        if (matches || children.length > 0) acc.push({ ...node, children });
-        return acc;
-      }, []);
-    return filter(state.data);
-  }, [state.data, searchTerm]);
-
-  return {
-    ...state,
-    expandedIds,
-    searchTerm,
-    setSearchTerm,
-    toggleExpand,
-    expandAll,
-    collapseAll: () => setExpandedIds([]),
-    refresh: fetchData,
-    filteredData,
-  };
-};
-
 const MenuNode = ({
   node,
   depth = 0,
@@ -378,6 +337,13 @@ const MenuNode = ({
   onAdd,
   onEdit,
   onDelete,
+  onReorder,
+  siblingsCount,
+  onDragStart,
+  onDragEnter,
+  onDragOver,
+  isDragging,
+  isDragTarget,
 }: {
   node: Menu;
   depth?: number;
@@ -386,13 +352,28 @@ const MenuNode = ({
   onAdd: (id: string) => void;
   onEdit: (node: Menu) => void;
   onDelete: (id: string) => void;
+  onReorder: (id: string, direction: "up" | "down") => void;
+  siblingsCount: number;
+  onDragStart: (e: React.DragEvent, id: string) => void;
+  onDragEnter: (e: React.DragEvent, id: string) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  isDragging: boolean;
+  isDragTarget: boolean;
 }) => {
   const isExpanded = expandedIds.includes(node.id);
   const hasChildren = node.children && node.children.length > 0;
-  const paddingLeft = depth * 28 + 12; // Precise indentation
+
+  const isFirst = node.order === 0;
+  const isLast = node.order === siblingsCount - 1;
 
   return (
-    <div className="relative select-none">
+    <div
+      className={cn("relative select-none", isDragging && "opacity-30")}
+      draggable="true"
+      onDragStart={(e) => onDragStart(e, node.id)}
+      onDragEnter={(e) => onDragEnter(e, node.id)}
+      onDragOver={onDragOver}
+    >
       {/* Connector Line (Vertical) */}
       {depth > 0 && (
         <div
@@ -414,9 +395,13 @@ const MenuNode = ({
           "group flex items-center gap-3 py-2 pr-3 rounded-lg border border-transparent transition-all duration-200",
           isExpanded
             ? "bg-slate-50 border-slate-100"
-            : "hover:bg-slate-50 hover:border-slate-100"
+            : "hover:bg-slate-50 hover:border-slate-100",
+          // Tunjukkan target drag, tapi tidak bisa pindah ke diri sendiri
+          isDragTarget &&
+            !isDragging &&
+            "ring-2 ring-blue-500 ring-offset-2 border-blue-500"
         )}
-        style={{ marginLeft: `${depth > 0 ? depth * 8 : 0}px` }}
+        style={{ marginLeft: `${depth * 24}px` }}
       >
         {/* Toggle Button */}
         <button
@@ -469,29 +454,67 @@ const MenuNode = ({
           </span>
         </div>
 
-        {/* Quick Actions (Hover Only) */}
+        {/* Reorder Actions (Up/Down) */}
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => onReorder(node.id, "up")}
+            className={cn(
+              "hover:text-slate-600",
+              isFirst && "opacity-30 pointer-events-none"
+            )}
+            disabled={isFirst}
+            title="Move Up"
+          >
+            <ArrowUp size={14} />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => onReorder(node.id, "down")}
+            className={cn(
+              "hover:text-slate-600",
+              isLast && "opacity-30 pointer-events-none"
+            )}
+            disabled={isLast}
+            title="Move Down"
+          >
+            <ArrowDown size={14} />
+          </Button>
+        </div>
+
+        {/* Quick CRUD Actions */}
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 border-l border-slate-100 pl-2">
+          <Button
+            type="button"
             variant="ghost"
             size="icon"
             onClick={() => onAdd(node.id)}
             className="hover:text-blue-600"
+            title="Add Child"
           >
             <Plus size={14} />
           </Button>
           <Button
+            type="button"
             variant="ghost"
             size="icon"
             onClick={() => onEdit(node)}
             className="hover:text-amber-600"
+            title="Rename/Move"
           >
             <Edit3 size={14} />
           </Button>
           <Button
+            type="button"
             variant="ghost"
             size="icon"
             onClick={() => onDelete(node.id)}
             className="hover:text-red-600"
+            title="Delete"
           >
             <Trash2 size={14} />
           </Button>
@@ -507,6 +530,7 @@ const MenuNode = ({
             style={{ left: `${depth * 28 + 27}px` }}
           />
           <div className="mt-1">
+            {/* Mengirimkan siblings.length sebagai siblingsCount untuk anak */}
             {node.children!.map((child) => (
               <MenuNode
                 key={child.id}
@@ -517,6 +541,13 @@ const MenuNode = ({
                 onAdd={onAdd}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                onReorder={onReorder}
+                siblingsCount={node.children!.length}
+                onDragStart={onDragStart}
+                onDragEnter={onDragEnter}
+                onDragOver={onDragOver}
+                isDragging={isDragging}
+                isDragTarget={isDragTarget}
               />
             ))}
           </div>
@@ -526,15 +557,206 @@ const MenuNode = ({
   );
 };
 
-/**
- * ==========================================
- * SECTION 5: MAIN APP (ORGANISM)
- * ==========================================
- */
+// Custom Hook untuk memisahkan Logic dari View
+const useMenuSystem = () => {
+  const [state, setState] = useState<Omit<MenuState, "error">>({
+    data: [],
+    loading: true,
+    isDemoMode: false,
+  });
+  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setState((prev) => ({ ...prev, loading: true }));
+    const data = await MenuService.fetchAll((isDemo) =>
+      setState((prev) => ({ ...prev, isDemoMode: isDemo }))
+    );
+    setExpandedIds((prev) => {
+      const currentIds = data.map((n: Menu) => n.id);
+      return prev.filter((id) => currentIds.includes(id));
+    });
+    setState((prev) => ({ ...prev, data, loading: false }));
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const expandAll = () => {
+    const getAllIds = (nodes: Menu[]): string[] => {
+      let ids: string[] = [];
+      nodes.forEach((n) => {
+        ids.push(n.id);
+        if (n.children) ids = [...ids, ...getAllIds(n.children)];
+      });
+      return ids;
+    };
+    setExpandedIds(getAllIds(state.data));
+  };
+
+  const handleCollapseAll = () => setExpandedIds([]);
+
+  const findNodeInTree = (
+    nodes: Menu[],
+    id: string | null
+  ): Menu | undefined => {
+    if (!id) return undefined;
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      if (node.children) {
+        const found = findNodeInTree(node.children, id);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+
+  const isAncestor = (
+    targetId: string | null,
+    potentialDescendantId: string | null
+  ): boolean => {
+    if (!targetId || !potentialDescendantId) return false;
+    let currentNode = findNodeInTree(state.data, potentialDescendantId);
+    while (currentNode && currentNode.parentId) {
+      if (currentNode.parentId === targetId) return true;
+      currentNode = findNodeInTree(state.data, currentNode.parentId);
+    }
+    return false;
+  };
+
+  const handleReorder = async (id: string, direction: "up" | "down") => {
+    const nodeToMove = findNodeInTree(state.data, id);
+    if (!nodeToMove) return;
+
+    let newOrder;
+    if (direction === "up") {
+      newOrder = nodeToMove.order - 1;
+    } else {
+      newOrder = nodeToMove.order + 1;
+    }
+
+    try {
+      await MenuService.reorder(id, newOrder, state.isDemoMode);
+      fetchData();
+    } catch (e) {
+      alert("Failed to reorder menu.");
+    }
+  };
+
+  // --- DRAG HANDLERS ---
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    setDraggingId(id);
+    e.dataTransfer.setData("text/plain", id);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragEnter = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (draggingId === targetId || isAncestor(draggingId, targetId)) {
+      setDragTargetId(null);
+      return;
+    }
+    setDragTargetId(targetId);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDragEnd = () => {
+    setDraggingId(null);
+    setDragTargetId(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData("text/plain");
+    const targetId = dragTargetId;
+
+    if (!draggedId || !targetId || draggedId === targetId) {
+      handleDragEnd();
+      return;
+    }
+
+    const itemToMove = findNodeInTree(state.data, draggedId);
+    const targetParent = findNodeInTree(state.data, targetId);
+
+    if (!itemToMove || !targetParent) {
+      handleDragEnd();
+      return;
+    }
+
+    if (isAncestor(draggedId, targetId) || draggedId === targetId) {
+      alert(
+        "Cannot move item under itself or its descendants (circular dependency detected)."
+      );
+      handleDragEnd();
+      return;
+    }
+
+    // Asumsi: Drop di atas node lain berarti MOVE PARENT
+    if (confirm(`Move "${itemToMove.name}" under "${targetParent.name}"?`)) {
+      try {
+        await MenuService.move(draggedId, targetParent.id, state.isDemoMode);
+        setExpandedIds((prev) => [...prev, targetParent.id]);
+        fetchData();
+      } catch (error) {
+        alert("Move failed on server. Possible circular dependency or error.");
+      }
+    }
+
+    handleDragEnd();
+  };
+
+  const filteredData = useMemo(() => {
+    if (!searchTerm) return state.data;
+    const filter = (nodes: Menu[]): Menu[] =>
+      nodes.reduce((acc: Menu[], node) => {
+        const matches = node.name
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase());
+        const children = node.children ? filter(node.children) : [];
+        if (matches || children.length > 0) acc.push({ ...node, children });
+        return acc;
+      }, []);
+    return filter(state.data);
+  }, [state.data, searchTerm]);
+
+  return {
+    ...state,
+    expandedIds,
+    searchTerm,
+    setSearchTerm,
+    toggleExpand,
+    expandAll,
+    collapseAll: handleCollapseAll,
+    refresh: fetchData,
+    filteredData,
+    handleReorder,
+    // Drag and Drop States/Handlers
+    draggingId,
+    dragTargetId,
+    handleDragStart,
+    handleDragEnter,
+    handleDragOver,
+    handleDrop,
+    handleDragEnd,
+    findNodeInTree,
+  };
+};
 
 export default function App() {
   const {
-    data,
     loading,
     isDemoMode,
     expandedIds,
@@ -545,30 +767,119 @@ export default function App() {
     collapseAll,
     refresh,
     setSearchTerm,
+    handleReorder,
+    draggingId,
+    dragTargetId,
+    handleDragStart,
+    handleDragEnter,
+    handleDragOver,
+    handleDrop,
+    handleDragEnd,
+    findNodeInTree,
   } = useMenuSystem();
 
-  // Modal State
   const [modal, setModal] = useState({
     open: false,
     type: "create" as "create" | "edit",
     parentId: null as string | null,
     editId: null as string | null,
     name: "",
+    moveTargetId: null as string | null,
+    currentParentId: null as string | null,
+    availableParents: [] as { id: string | null; name: string }[],
   });
   const [saving, setSaving] = useState(false);
 
-  // Actions
+  const getAvailableParents = (
+    tree: Menu[],
+    currentId: string | null
+  ): { id: string | null; name: string }[] => {
+    const parents: { id: string | null; name: string }[] = [
+      { id: null, name: "(Root)" },
+    ];
+
+    // Fungsi untuk mencegah siklus saat memindahkan
+    const isDescendantOrSelf = (
+      potentialAncestorId: string | null,
+      nodeId: string
+    ): boolean => {
+      if (potentialAncestorId === nodeId) return true;
+      let currentNode = findNodeInTree(tree, nodeId);
+      while (currentNode && currentNode.parentId) {
+        if (currentNode.parentId === potentialAncestorId) return true;
+        currentNode = findNodeInTree(tree, currentNode.parentId);
+      }
+      return false;
+    };
+
+    const collectValidParents = (nodes: Menu[]) => {
+      nodes.forEach((node) => {
+        // Hanya tambahkan jika BUKAN node yang sedang diedit
+        if (node.id !== currentId) {
+          parents.push({ id: node.id, name: node.name });
+        }
+
+        if (node.children) {
+          collectValidParents(node.children);
+        }
+      });
+    };
+
+    collectValidParents(tree);
+
+    // Filter semua node yang merupakan keturunan (descendant) dari node yang sedang diedit
+    // Tujuannya agar tidak bisa memindahkan node X ke anak dari node X (circular)
+    return parents.filter(
+      (p) => !currentId || p.id === null || !isDescendantOrSelf(currentId, p.id)
+    );
+  };
+
+  const openEditModal = (node: Menu) => {
+    const parents = getAvailableParents(filteredData, node.id);
+
+    setModal({
+      ...modal,
+      open: true,
+      type: "edit",
+      parentId: node.parentId,
+      editId: node.id,
+      name: node.name,
+      moveTargetId: node.parentId,
+      currentParentId: node.parentId,
+      availableParents: parents,
+    });
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modal.name.trim()) return;
     setSaving(true);
+
     try {
       if (modal.type === "create") {
         await MenuService.create(modal.name, modal.parentId, isDemoMode);
-        if (modal.parentId) toggleExpand(modal.parentId); // Auto expand parent
+        if (modal.parentId) toggleExpand(modal.parentId);
       } else {
-        if (modal.editId)
-          await MenuService.update(modal.editId, modal.name, isDemoMode);
+        if (modal.editId) {
+          // 1. Handle Rename
+          const originalNode = findNodeInTree(filteredData, modal.editId);
+          if (modal.name !== originalNode?.name) {
+            await MenuService.update(
+              modal.editId,
+              { name: modal.name },
+              isDemoMode
+            );
+          }
+
+          // 2. Handle Move (jika parent berubah)
+          if (modal.moveTargetId !== modal.currentParentId) {
+            await MenuService.move(
+              modal.editId,
+              modal.moveTargetId,
+              isDemoMode
+            );
+          }
+        }
       }
       setModal({ ...modal, open: false });
       refresh();
@@ -598,7 +909,7 @@ export default function App() {
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
                 System Menus
               </h1>
-              <div className="flex items-center gap-3 mt-1">
+              <div className="flex items-center gap-2 mt-1">
                 <span className="text-sm text-slate-500">
                   Hierarchical Management
                 </span>
@@ -611,17 +922,28 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <div className="bg-white rounded-lg border border-slate-200 p-1 flex shadow-sm">
-              <Button variant="ghost" size="sm" onClick={expandAll}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={expandAll}
+              >
                 Expand All
               </Button>
               <div className="w-px bg-slate-200 my-1" />
-              <Button variant="ghost" size="sm" onClick={collapseAll}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={collapseAll}
+              >
                 Collapse
               </Button>
             </div>
             <Button
               onClick={() =>
                 setModal({
+                  ...modal,
                   open: true,
                   type: "create",
                   parentId: null,
@@ -662,7 +984,12 @@ export default function App() {
           </div>
 
           {/* TREE VIEW */}
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div
+            className="flex-1 p-6 overflow-y-auto"
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragEnd}
+          >
             {loading ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
                 <Loader2 className="animate-spin text-blue-600" size={32} />
@@ -670,7 +997,7 @@ export default function App() {
               </div>
             ) : filteredData.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-4">
-                <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center border border-slate-100">
+                <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-center border border-slate-100">
                   <Layout size={32} strokeWidth={1} />
                 </div>
                 <div className="text-center">
@@ -681,7 +1008,7 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-1 max-w-4xl">
+              <div className="space-y-0.5 max-w-4xl">
                 {filteredData.map((node) => (
                   <MenuNode
                     key={node.id}
@@ -690,6 +1017,7 @@ export default function App() {
                     onToggle={toggleExpand}
                     onAdd={(id) =>
                       setModal({
+                        ...modal,
                         open: true,
                         type: "create",
                         parentId: id,
@@ -697,16 +1025,15 @@ export default function App() {
                         name: "",
                       })
                     }
-                    onEdit={(n) =>
-                      setModal({
-                        open: true,
-                        type: "edit",
-                        parentId: null,
-                        editId: n.id,
-                        name: n.name,
-                      })
-                    }
+                    onEdit={openEditModal}
                     onDelete={handleDelete}
+                    onReorder={handleReorder}
+                    siblingsCount={filteredData.length}
+                    onDragStart={handleDragStart}
+                    onDragEnter={handleDragEnter}
+                    onDragOver={handleDragOver}
+                    isDragging={draggingId === node.id}
+                    isDragTarget={dragTargetId === node.id}
                   />
                 ))}
               </div>
@@ -730,17 +1057,48 @@ export default function App() {
             ? modal.parentId
               ? "New Sub-Menu"
               : "New Root Menu"
-            : "Edit Menu Item"
+            : `Edit ${modal.name}`
         }
       >
-        <form onSubmit={handleSave} className="space-y-6">
+        <form onSubmit={handleSave} className="space-y-5">
           <Input
-            label="Menu Label"
+            label="Menu Label (Rename)"
             placeholder="e.g. Dashboard"
             autoFocus
             value={modal.name}
             onChange={(e) => setModal({ ...modal, name: e.target.value })}
           />
+
+          {/* Bagian Move Parent (hanya muncul saat Edit) */}
+          {modal.type !== "create" && (
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-slate-700">
+                Move To Parent
+              </label>
+              <select
+                value={modal.moveTargetId || "null"}
+                onChange={(e) =>
+                  setModal({
+                    ...modal,
+                    moveTargetId:
+                      e.target.value === "null" ? null : e.target.value,
+                  })
+                }
+                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
+              >
+                {modal.availableParents.map((parent) => (
+                  <option key={parent.id || "null"} value={parent.id || "null"}>
+                    {parent.name}
+                    {parent.id === modal.currentParentId && " (Current)"}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-gray-400 mt-1.5">
+                Select the new parent folder for this menu.
+              </p>
+            </div>
+          )}
+
           <div className="flex justify-end gap-3 pt-2">
             <Button
               type="button"
