@@ -16,14 +16,12 @@ export class Menu {
   @Column()
   name: string;
 
-  // --- TAMBAHAN BARU: KOLOM URUTAN ---
   @Column({ default: 0 })
   order: number;
-  // ------------------------------------
 
   @TreeChildren()
   children: Menu[];
 
   @TreeParent()
-  parent: Menu;
+  parent: Menu | null;
 }

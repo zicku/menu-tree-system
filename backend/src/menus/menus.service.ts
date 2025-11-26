@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { CreateMenuDto } from './dto/create-menu.dto';
 import { UpdateMenuDto } from './dto/update-menu.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -33,7 +37,7 @@ export class MenusService {
   async findAll() {
     const trees = await this.menuRepository.findTrees();
 
-    // Sort manual recursive
+    // Fungsi helper untuk sort recursive berdasarkan 'order'
     const sortRecursive = (nodes: Menu[]) => {
       nodes.sort((a, b) => a.order - b.order);
       nodes.forEach((node) => {
@@ -45,7 +49,7 @@ export class MenusService {
     return trees;
   }
 
-  // FIND ONE
+  // FIND by ID
   async findOne(id: string) {
     const menu = await this.menuRepository.findOne({
       where: { id },
@@ -59,56 +63,79 @@ export class MenusService {
   async update(id: string, updateMenuDto: UpdateMenuDto | any) {
     const menu = await this.findOne(id);
 
-    if (updateMenuDto.name) menu.name = updateMenuDto.name;
+    // Update Name
+    if (updateMenuDto.name) {
+      menu.name = updateMenuDto.name;
+    }
 
-    if (updateMenuDto.parentId) {
-      const parent = await this.menuRepository.findOneBy({
-        id: updateMenuDto.parentId,
-      });
-      if (parent) menu.parent = parent;
+    // Update Parent (Move Menu)
+    if (updateMenuDto.parentId !== undefined) {
+      // Jika parentId null, berarti jadikan root
+      if (updateMenuDto.parentId === null) {
+        menu.parent = null;
+      } else {
+        const parent = await this.menuRepository.findOne({
+          where: { id: updateMenuDto.parentId },
+        });
+
+        if (!parent) throw new NotFoundException('Parent not found');
+
+        // Validasi: Cegah menu menjadi parent dirinya sendiri
+        if (parent.id === menu.id) {
+          throw new BadRequestException('Cannot set menu as its own parent');
+        }
+
+        menu.parent = parent;
+      }
     }
 
     return this.menuRepository.save(menu);
   }
 
-  // REMOVE
+  // 5. REMOVE
   async remove(id: string) {
     const menu = await this.findOne(id);
     return this.menuRepository.remove(menu);
   }
 
-  // REORDER
+  // 6. REORDER (Bonus Feature)
   async reorder(id: string, newOrder: number) {
     const menu = await this.findOne(id);
-
     let siblings: Menu[] = [];
 
+    // Ambil siblings (saudara satu level)
     if (menu.parent) {
       const parent = await this.menuRepository.findOne({
         where: { id: menu.parent.id },
         relations: ['children'],
       });
-
       siblings = parent?.children || [];
     } else {
       siblings = await this.menuRepository.findRoots();
     }
 
-    // Sortir berdasarkan order lama
+    // Sortir siblings berdasarkan order saat ini
     siblings.sort((a, b) => a.order - b.order);
 
+    // Hapus item yang mau dipindahkan dari array sementara
     const filtered = siblings.filter((s) => s.id !== id);
+
+    // Validasi range order
     if (newOrder < 0) newOrder = 0;
     if (newOrder > filtered.length) newOrder = filtered.length;
 
+    // Masukkan item ke posisi baru
     filtered.splice(newOrder, 0, menu);
 
-    // Simpan urutan baru
+    // Simpan ulang semua siblings dengan order baru
     for (let i = 0; i < filtered.length; i++) {
-      filtered[i].order = i;
-      await this.menuRepository.save(filtered[i]);
+      // Update hanya jika order berubah untuk efisiensi
+      if (filtered[i].order !== i) {
+        filtered[i].order = i;
+        await this.menuRepository.save(filtered[i]);
+      }
     }
 
-    return { message: 'Reorder success' };
+    return { message: 'Reorder success', order: newOrder };
   }
 }
