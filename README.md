@@ -21,6 +21,7 @@ Aplikasi full-stack untuk manajemen menu hierarkis (Backend: NestJS, Database: M
    - DB_DATABASE
    - BACKEND_PORT
    - FRONTEND_PORT
+   - VITE_API_URL
 
 ## Menjalankan di mode development
 - Backend:
