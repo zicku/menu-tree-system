@@ -81,3 +81,11 @@ Lihat controller di: `backend/src/menus/menus.controller.ts`. Frontend memanggil
 ## Catatan singkat
 - Periksa `.env` untuk menyesuaikan port dan kredensial DB.
 - Jika Swagger tidak muncul, pastikan backend berjalan dan periksa path di `backend/src/main.ts`.
+
+  <p align="center">
+  <img src="mockup/ssDasboard.png" width="800" alt="Mockup Dashboard" />
+</p>
+
+<p align="center">
+  <img src="mockup/ssModals.png" width="600" alt="Mockup Modals" />
+</p>
