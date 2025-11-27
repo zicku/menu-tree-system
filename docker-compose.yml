@@ -1,16 +1,14 @@
 version: "3.8"
 
-# Hapus baris "env_file" di sini (tingkat root)
-
 services:
-  # 1. Database Service (MySQL)
+  # Database Service
   mysql:
     image: mysql:8
     container_name: menu_mysql_db
-    # FIX KRITIS: Tambahkan env_file di sini
+
     env_file: ./.env
     environment:
-      # Variabel ini digunakan MySQL untuk inisialisasi user root dan nama database
+      # Variabel MySQL untuk inisialisasi user root dan nama database
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
       MYSQL_DATABASE: ${DB_DATABASE}
     ports:
@@ -24,15 +22,15 @@ services:
       timeout: 20s
       retries: 10
 
-  # 2. Backend Service (NestJS)
+  # Backend Service
   backend:
     build: ./backend
     container_name: menu_backend
     ports:
       - "${BACKEND_PORT}:${BACKEND_PORT}"
-    # FIX KRITIS: Tambahkan env_file di sini
+
     env_file: ./.env
-    # Environment variables yang dipakai NestJS (src/app.module.ts)
+    # Environment variables yang dipakai (src/app.module.ts)
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
@@ -47,13 +45,13 @@ services:
       - menu-network
     restart: on-failure
 
-  # 3. Frontend Service (React/Vite)
+  # Frontend Service
   frontend:
     build: ./frontend
     container_name: menu_frontend
     ports:
       - "${FRONTEND_PORT}:${FRONTEND_PORT}"
-    # FIX KRITIS: Tambahkan env_file di sini
+
     env_file: ./.env
     # Environment variable untuk Frontend (Vite)
     environment:
