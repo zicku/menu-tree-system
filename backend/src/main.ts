@@ -16,7 +16,7 @@ async function bootstrap() {
     }),
   );
 
-  // 2. Tambahkan konfigurasi Swagger di sini
+  // konfigurasi Swagger
   const config = new DocumentBuilder()
     .setTitle('Menu Tree API')
     .setDescription('Dokumentasi API untuk STK Technical Test')
